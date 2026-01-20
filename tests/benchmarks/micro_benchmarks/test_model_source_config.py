@@ -44,21 +44,31 @@ class TestModelSourceConfig:
         with pytest.raises(ValueError, match='identifier must be provided'):
             ModelSourceConfig(identifier='')
 
-    def test_validate_huggingface_format(self):
-        """Test validation of HuggingFace model identifier format."""
+    def test_validate_huggingface_empty(self):
+        """Test validation of empty HuggingFace model identifier."""
         config = ModelSourceConfig(
             source='huggingface',
-            identifier='invalid-format'
+            identifier='   '
         )
         is_valid, message = config.validate()
         assert not is_valid
-        assert 'organization/model-name' in message
+        assert 'cannot be empty' in message
 
     def test_validate_valid_huggingface(self):
         """Test validation of valid HuggingFace model."""
         config = ModelSourceConfig(
             source='huggingface',
             identifier='meta-llama/Llama-2-7b-hf'
+        )
+        is_valid, message = config.validate()
+        assert is_valid
+        assert message == ''
+
+    def test_validate_valid_huggingface_short_name(self):
+        """Test validation of valid HuggingFace model with short name (no org)."""
+        config = ModelSourceConfig(
+            source='huggingface',
+            identifier='bert-base-uncased'
         )
         is_valid, message = config.validate()
         assert is_valid

@@ -48,23 +48,6 @@ class HuggingFaceModelLoader:
         token: HuggingFace authentication token for private/gated models.
     """
 
-    # Architectures known to work well with ONNX export
-    SUPPORTED_ARCHITECTURES = {
-        'bert', 'roberta', 'distilbert', 'albert', 'electra',  # BERT family
-        'gpt2', 'gpt_neo', 'gptj', 'gpt_neox',  # GPT family
-        'llama', 'llama2', 'llama3',  # Llama family
-        'qwen', 'qwen2',  # Qwen family
-        'mixtral',  # Mixtral MoE
-        'bloom',  # BLOOM
-        'opt',  # OPT
-        'bart', 't5',  # Seq2Seq models
-    }
-
-    # Architectures that may have issues with ONNX export
-    EXPERIMENTAL_ARCHITECTURES = {
-        'deepseek', 'falcon', 'mpt', 'stablelm', 'phi', 'mistral'
-    }
-
     def __init__(self, cache_dir: Optional[str] = None, token: Optional[str] = None):
         """Initialize the HuggingFace model loader.
 
@@ -133,13 +116,11 @@ class HuggingFaceModelLoader:
             logger.info('Loading model configuration...')
             config = AutoConfig.from_pretrained(model_identifier, **load_kwargs)
 
-            # Validate architecture compatibility
-            architecture = config.model_type.lower()
-            is_compatible, reason = self._check_architecture_compatibility(architecture)
-            if not is_compatible:
-                logger.warning(
-                    f'Model architecture "{architecture}" may have issues: {reason}'
-                )
+            # Warn about potential ONNX compatibility issues
+            logger.warning(
+                f'Model architecture "{config.model_type}" may not be fully compatible with ONNX export. '
+                'Some model architectures may fail during ONNX conversion or inference.'
+            )
 
             # Load tokenizer (may fail for some models, that's ok)
             tokenizer = None
@@ -222,17 +203,6 @@ class HuggingFaceModelLoader:
             **config.additional_kwargs
         )
 
-    def list_supported_architectures(self) -> Dict[str, List[str]]:
-        """Return list of model architectures and their support status.
-
-        Returns:
-            Dictionary with 'supported' and 'experimental' architecture lists.
-        """
-        return {
-            'supported': sorted(list(self.SUPPORTED_ARCHITECTURES)),
-            'experimental': sorted(list(self.EXPERIMENTAL_ARCHITECTURES)),
-        }
-
     def _get_torch_dtype(self, dtype_str: str) -> torch.dtype:
         """Convert dtype string to torch.dtype.
 
@@ -262,33 +232,6 @@ class HuggingFaceModelLoader:
             )
 
         return dtype_map[dtype_str.lower()]
-
-    def _check_architecture_compatibility(self, architecture: str) -> Tuple[bool, str]:
-        """Check if architecture is compatible with ONNX export.
-
-        Args:
-            architecture: Model architecture name.
-
-        Returns:
-            Tuple of (is_compatible, reason/note).
-        """
-        architecture = architecture.lower()
-
-        if architecture in self.SUPPORTED_ARCHITECTURES:
-            return (True, f"Architecture '{architecture}' is well-tested and supported")
-
-        if architecture in self.EXPERIMENTAL_ARCHITECTURES:
-            return (
-                True,
-                f"Architecture '{architecture}' is experimental. "
-                "ONNX export may require special handling."
-            )
-
-        return (
-            False,
-            f"Architecture '{architecture}' is not in the tested list. "
-            "ONNX export may fail or require modifications."
-        )
 
     def _get_model_size(self, model: PreTrainedModel) -> float:
         """Calculate model size in millions of parameters.

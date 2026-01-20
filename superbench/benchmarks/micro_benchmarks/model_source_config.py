@@ -78,13 +78,12 @@ class ModelSourceConfig:
             Tuple of (is_valid, error_message).
             If is_valid is True, error_message is empty.
         """
-        # Check identifier format for HuggingFace models
+        # Check identifier is not empty for HuggingFace models
         if self.source == 'huggingface':
-            if '/' not in self.identifier and not self.identifier.startswith('hf://'):
+            if not self.identifier or not self.identifier.strip():
                 return (
                     False,
-                    f"HuggingFace model identifier '{self.identifier}' should be in "
-                    f"format 'organization/model-name' (e.g., 'meta-llama/Llama-2-7b-hf')"
+                    "HuggingFace model identifier cannot be empty"
                 )
 
         return (True, '')
