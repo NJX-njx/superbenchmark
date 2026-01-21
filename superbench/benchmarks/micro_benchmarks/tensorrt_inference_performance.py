@@ -189,27 +189,35 @@ class TensorRTInferenceBenchmark(MicroBenchmarkWithInvoke):
                 logger.error(f'Failed to export {self._args.model_identifier} to ONNX')
                 return False
             
-            # Determine input shape based on model type by checking ONNX file
+            # Determine input shapes based on model type by checking ONNX file
             import onnx as onnx_lib
             onnx_model = onnx_lib.load(onnx_path)
             
-            # Get the first input to determine shape and name
-            input_name = onnx_model.graph.input[0].name
+            # Build shape specifications for all inputs
+            opt_shapes = []
+            for input_tensor in onnx_model.graph.input:
+                input_name = input_tensor.name
+                input_dims = len(input_tensor.type.tensor_type.shape.dim)
+                
+                # Vision models typically have 4D input (batch, channels, height, width)
+                # NLP models typically have 2D input (batch, sequence)
+                if input_name == 'pixel_values' or input_dims == 4:
+                    # Vision model: batch x channels x height x width
+                    input_shape = f'{self._args.batch_size}x3x224x224'
+                else:
+                    # NLP model inputs (input_ids, attention_mask, etc.): batch x sequence
+                    input_shape = f'{self._args.batch_size}x{getattr(self._args, "seq_length", 512)}'
+                
+                opt_shapes.append(f'{input_name}:{input_shape}')
             
-            # Vision models typically have 4D input (batch, channels, height, width)
-            # NLP models typically have 2D input (batch, sequence)
-            if input_name == 'pixel_values' or len(onnx_model.graph.input[0].type.tensor_type.shape.dim) == 4:
-                # Vision model: batch x channels x height x width
-                input_shape = f'{self._args.batch_size}x3x224x224'
-            else:
-                # NLP model: batch x sequence
-                input_shape = f'{self._args.batch_size}x{getattr(self._args, "seq_length", 512)}'
+            # Join all input shapes with commas for --optShapes argument
+            opt_shapes_str = ','.join(opt_shapes)
             
-            # Build TensorRT command with correct input name
+            # Build TensorRT command with all input shapes
             args = [
                 self.__bin_path,
                 f'--onnx={onnx_path}',
-                f'--optShapes={input_name}:{input_shape}',
+                f'--optShapes={opt_shapes_str}',
                 f'--memPoolSize=workspace:8192M',
                 None if self._args.precision == 'fp32' else f'--{self._args.precision}',
                 f'--iterations={self._args.iterations}',
