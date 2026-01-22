@@ -229,6 +229,13 @@ class ORTInferenceBenchmark(MicroBenchmark):
                 logger.error(f'Failed to export {self._args.model_identifier} to ONNX')
                 return False
             
+            # Apply INT8 quantization if requested (matching in-house model behavior)
+            if self._args.precision == Precision.INT8:
+                from onnxruntime.quantization import quantize_dynamic
+                quantized_path = str(self.__model_cache_path / f'{model_name}.{self._args.precision.value}.onnx')
+                quantize_dynamic(onnx_path, quantized_path)
+                logger.info(f'Applied INT8 quantization to HuggingFace model')
+            
             # Update model list for benchmarking
             self._args.pytorch_models = [model_name]
             
