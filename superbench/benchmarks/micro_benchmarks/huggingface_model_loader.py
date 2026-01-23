@@ -48,6 +48,23 @@ class HuggingFaceModelLoader:
         token: HuggingFace authentication token for private/gated models.
     """
 
+    # Architectures known to work well with ONNX export
+    SUPPORTED_ARCHITECTURES = {
+        'bert', 'roberta', 'distilbert', 'albert', 'electra',  # BERT family
+        'gpt2', 'gpt_neo', 'gptj', 'gpt_neox',  # GPT family
+        'llama', 'llama2', 'llama3',  # Llama family
+        'qwen', 'qwen2',  # Qwen family
+        'mixtral',  # Mixtral MoE
+        'bloom',  # BLOOM
+        'opt',  # OPT
+        'bart', 't5',  # Seq2Seq models
+    }
+
+    # Architectures that may have issues with ONNX export
+    EXPERIMENTAL_ARCHITECTURES = {
+        'deepseek', 'falcon', 'mpt', 'stablelm', 'phi', 'mistral'
+    }
+
     def __init__(self, cache_dir: Optional[str] = None, token: Optional[str] = None):
         """Initialize the HuggingFace model loader.
 

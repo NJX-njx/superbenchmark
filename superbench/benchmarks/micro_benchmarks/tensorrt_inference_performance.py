@@ -113,7 +113,7 @@ class TensorRTInferenceBenchmark(MicroBenchmarkWithInvoke):
         # Handle HuggingFace models if specified
         if self._args.model_source == 'huggingface':
             return self._preprocess_huggingface_models()
-        
+
         # Original in-house model processing
         exporter = torch2onnxExporter()
         for model in self._args.pytorch_models:
@@ -149,19 +149,19 @@ class TensorRTInferenceBenchmark(MicroBenchmarkWithInvoke):
 
     def _preprocess_huggingface_models(self):
         """Preprocess HuggingFace models for TensorRT inference.
-        
+
         Returns:
             bool: True if preprocessing succeeds.
         """
         import torch
-        
+
         if not self._args.model_identifier:
             logger.error('--model_identifier is required when using --model_source huggingface')
             return False
-        
+
         try:
             logger.info(f'Loading HuggingFace model: {self._args.model_identifier}')
-            
+
             # Create model source config
             model_config = ModelSourceConfig(
                 source='huggingface',
@@ -169,68 +169,59 @@ class TensorRTInferenceBenchmark(MicroBenchmarkWithInvoke):
                 hf_token=self._args.hf_token,
                 torch_dtype='float32',  # TensorRT will handle precision
             )
-            
+
             # Load model from HuggingFace
             loader = HuggingFaceModelLoader(token=self._args.hf_token)
             hf_model, hf_config, tokenizer = loader.load_model_from_config(model_config)
-            
+
             # Export to ONNX
-            from superbench.benchmarks.micro_benchmarks._export_torch_to_onnx import torch2onnxExporter
             exporter = torch2onnxExporter()
-            
+
             onnx_path = exporter.export_huggingface_model(
                 model=hf_model,
                 model_name=self._args.model_identifier.replace('/', '_'),
                 batch_size=self._args.batch_size,
                 seq_length=getattr(self._args, 'seq_length', 512),
             )
-            
+
             if not onnx_path:
                 logger.error(f'Failed to export {self._args.model_identifier} to ONNX')
                 return False
-            
-            # Determine input shapes based on model type by checking ONNX file
+
+            # Determine input shape based on model type by checking ONNX file
             import onnx as onnx_lib
             onnx_model = onnx_lib.load(onnx_path)
-            
-            # Build shape specifications for all inputs
-            opt_shapes = []
-            for input_tensor in onnx_model.graph.input:
-                input_name = input_tensor.name
-                input_dims = len(input_tensor.type.tensor_type.shape.dim)
-                
-                # Vision models typically have 4D input (batch, channels, height, width)
-                # NLP models typically have 2D input (batch, sequence)
-                if input_name == 'pixel_values' or input_dims == 4:
-                    # Vision model: batch x channels x height x width
-                    input_shape = f'{self._args.batch_size}x3x224x224'
-                else:
-                    # NLP model inputs (input_ids, attention_mask, etc.): batch x sequence
-                    input_shape = f'{self._args.batch_size}x{getattr(self._args, "seq_length", 512)}'
-                
-                opt_shapes.append(f'{input_name}:{input_shape}')
-            
-            # Join all input shapes with commas for --optShapes argument
-            opt_shapes_str = ','.join(opt_shapes)
-            
-            # Build TensorRT command with all input shapes
+
+            # Get the first input to determine shape and name
+            input_name = onnx_model.graph.input[0].name
+
+            # Vision models typically have 4D input (batch, channels, height, width)
+            # NLP models typically have 2D input (batch, sequence)
+            if input_name == 'pixel_values' or len(onnx_model.graph.input[0].type.tensor_type.shape.dim) == 4:
+                # Vision model: batch x channels x height x width
+                input_shape = f'{self._args.batch_size}x3x224x224'
+            else:
+                # NLP model: batch x sequence
+                input_shape = f'{self._args.batch_size}x{getattr(self._args, "seq_length", 512)}'
+
+            # Build TensorRT command with correct input name
             args = [
                 self.__bin_path,
                 f'--onnx={onnx_path}',
-                f'--optShapes={opt_shapes_str}',
+                f'--optShapes={input_name}:{input_shape}',
                 f'--memPoolSize=workspace:8192M',
                 None if self._args.precision == 'fp32' else f'--{self._args.precision}',
                 f'--iterations={self._args.iterations}',
                 '--percentile=99',
             ]
             self._commands.append(' '.join(filter(None, args)))
-            
+
             # Store model name for result processing
             self._args.pytorch_models = [self._args.model_identifier.replace('/', '_')]
-            
+
             logger.info(f'Successfully prepared HuggingFace model for TensorRT inference')
             return True
-            
+
         except Exception as e:
             logger.error(f'Failed to prepare HuggingFace model: {str(e)}')
             return False
