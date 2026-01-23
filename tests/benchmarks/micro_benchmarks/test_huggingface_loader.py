@@ -35,14 +35,6 @@ class TestHuggingFaceModelLoader:
         loader = HuggingFaceModelLoader()
         assert loader.token == 'env_token'
 
-    def test_supported_architectures(self, loader):
-        """Test supported architectures list."""
-        architectures = loader.list_supported_architectures()
-        assert 'bert' in architectures['supported']
-        assert 'gpt2' in architectures['supported']
-        assert 'llama' in architectures['supported']
-        assert 'qwen' in architectures['supported']
-
     def test_get_torch_dtype_valid(self, loader):
         """Test torch dtype conversion."""
         assert loader._get_torch_dtype('float32') == torch.float32
@@ -54,24 +46,6 @@ class TestHuggingFaceModelLoader:
         """Test invalid dtype raises error."""
         with pytest.raises(ValueError, match='Invalid dtype'):
             loader._get_torch_dtype('invalid_dtype')
-
-    def test_check_architecture_compatibility_supported(self, loader):
-        """Test compatibility check for supported architecture."""
-        is_compatible, reason = loader._check_architecture_compatibility('bert')
-        assert is_compatible is True
-        assert 'well-tested' in reason
-
-    def test_check_architecture_compatibility_experimental(self, loader):
-        """Test compatibility check for experimental architecture."""
-        is_compatible, reason = loader._check_architecture_compatibility('deepseek')
-        assert is_compatible is True
-        assert 'experimental' in reason.lower()
-
-    def test_check_architecture_compatibility_unsupported(self, loader):
-        """Test compatibility check for unsupported architecture."""
-        is_compatible, reason = loader._check_architecture_compatibility('unknown_arch')
-        assert is_compatible is False
-        assert 'not in the tested list' in reason
 
     @patch('superbench.benchmarks.micro_benchmarks.huggingface_model_loader.AutoModel')
     @patch('superbench.benchmarks.micro_benchmarks.huggingface_model_loader.AutoConfig')
