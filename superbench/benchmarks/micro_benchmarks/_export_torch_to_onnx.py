@@ -367,6 +367,14 @@ class torch2onnxExporter():
                 export_args = (dummy_input, attention_mask)
 
             # Export to ONNX
+            # For large models (>2GB), use external data format
+            model_size_gb = sum(p.numel() * p.element_size() for p in model.parameters()) / (1024**3)
+            use_external_data = model_size_gb > 2.0
+
+            if use_external_data:
+                from superbench.common.utils import logger
+                logger.info(f'Model size is {model_size_gb:.2f}GB, using external data format for ONNX export')
+
             torch.onnx.export(
                 wrapped_model,
                 export_args,
@@ -377,6 +385,23 @@ class torch2onnxExporter():
                 output_names=['output'],
                 dynamic_axes=dynamic_axes,
             )
+
+            # If using external data, convert to external data format
+            if use_external_data:
+                import onnx
+                from onnx.external_data_helper import convert_model_to_external_data
+                
+                onnx_model = onnx.load(file_name)
+                external_data_path = model_name + '_data.bin'
+                convert_model_to_external_data(
+                    onnx_model,
+                    all_tensors_to_one_file=True,
+                    location=external_data_path,
+                    size_threshold=1024,
+                    convert_attribute=False
+                )
+                onnx.save(onnx_model, file_name)
+                logger.info(f'Converted ONNX model to external data format: {external_data_path}')
 
             # Clean up
             del dummy_input

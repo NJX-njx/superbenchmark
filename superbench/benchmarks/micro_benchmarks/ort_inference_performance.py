@@ -179,19 +179,25 @@ class ORTInferenceBenchmark(MicroBenchmark):
 
     def _preprocess_huggingface_models(self):
         """Preprocess HuggingFace models for ONNX Runtime inference.
-        
+
         Returns:
             bool: True if preprocessing succeeds.
         """
         import torch
-        
+        import os
+
         if not self._args.model_identifier:
             logger.error('--model_identifier is required when using --model_source huggingface')
             return False
-        
+
         try:
             logger.info(f'Loading HuggingFace model: {self._args.model_identifier}')
-            
+
+            # Get GPU rank to create unique file paths and avoid race conditions
+            # when multiple processes export the same model simultaneously
+            gpu_rank = os.getenv('CUDA_VISIBLE_DEVICES', '0')
+            proc_rank = os.getenv('PROC_RANK', gpu_rank)
+
             # Create model source config
             model_config = ModelSourceConfig(
                 source='huggingface',
@@ -199,49 +205,52 @@ class ORTInferenceBenchmark(MicroBenchmark):
                 hf_token=self._args.hf_token,
                 torch_dtype=self._args.precision.value if self._args.precision != Precision.INT8 else 'float32',
             )
-            
+
             # Load model from HuggingFace
             loader = HuggingFaceModelLoader(token=self._args.hf_token)
-            hf_model,  hf_config, tokenizer = loader.load_model_from_config(model_config)
-            
+            hf_model, _, _ = loader.load_model_from_config(model_config)
+
             # Export to ONNX
             from superbench.benchmarks.micro_benchmarks._export_torch_to_onnx import torch2onnxExporter
             exporter = torch2onnxExporter()
-            
+
             model_name = self._args.model_identifier.replace('/', '_')
-            
-            # Prepare output path
-            self.__model_cache_path.mkdir(parents=True, exist_ok=True)
-            
+
+            # Prepare output path - use proc_rank subdirectory to avoid race conditions
+            # when multiple processes export the same model simultaneously
+            proc_output_path = self.__model_cache_path / f'rank_{proc_rank}'
+            proc_output_path.mkdir(parents=True, exist_ok=True)
+
             # Include precision in model name to match expected filename format
             model_name_with_precision = f'{model_name}.{self._args.precision.value}'
-            
+
             # Export directly to final destination to avoid path issues with external data
             onnx_path = exporter.export_huggingface_model(
                 model=hf_model,
                 model_name=model_name_with_precision,
                 batch_size=self._args.batch_size,
                 seq_length=self._args.seq_length,
-                output_dir=str(self.__model_cache_path),
+                output_dir=str(proc_output_path),
             )
-            
+
             if not onnx_path:
                 logger.error(f'Failed to export {self._args.model_identifier} to ONNX')
                 return False
-            
+
             # Apply INT8 quantization if requested (matching in-house model behavior)
             if self._args.precision == Precision.INT8:
                 from onnxruntime.quantization import quantize_dynamic
-                quantized_path = str(self.__model_cache_path / f'{model_name}.{self._args.precision.value}.onnx')
+                quantized_path = str(proc_output_path / f'{model_name}.{self._args.precision.value}.onnx')
                 quantize_dynamic(onnx_path, quantized_path)
                 logger.info(f'Applied INT8 quantization to HuggingFace model')
-            
-            # Update model list for benchmarking
+
+            # Update model list and cache path for benchmarking
             self._args.pytorch_models = [model_name]
-            
+            self.__model_cache_path = proc_output_path
+
             logger.info(f'Successfully prepared HuggingFace model for ORT inference')
             return True
-            
+
         except Exception as e:
             logger.error(f'Failed to prepare HuggingFace model: {str(e)}')
             import traceback
@@ -289,10 +298,10 @@ class ORTInferenceBenchmark(MicroBenchmark):
             elapse_times (List[float]): latency of every iterations.
         """
         precision = np.float16 if self._args.precision == Precision.FLOAT16 else np.float32
-        
+
         # Get input names from the ONNX session to determine input format
         input_names = [input.name for input in ort_sess.get_inputs()]
-        
+
         # Determine input format based on what the model expects
         if 'pixel_values' in input_names:
             # Vision model: use pixel_values (batch_size, 3, 224, 224)
