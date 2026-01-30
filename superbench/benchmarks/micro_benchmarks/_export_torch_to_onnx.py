@@ -309,8 +309,9 @@ class torch2onnxExporter():
 
             # Detect model type and create appropriate inputs
             # Vision models use pixel_values, NLP models use input_ids
-            model_type = getattr(model.config, 'model_type', '').lower()
-            is_vision_model = model_type in ['resnet', 'vit', 'swin', 'convnext', 'efficientnet', 'beit', 'deit']
+            # Use HuggingFace's main_input_name property for automatic detection
+            main_input = getattr(model, 'main_input_name', 'input_ids')
+            is_vision_model = main_input == 'pixel_values'
 
             if is_vision_model:
                 # Vision models: use pixel_values (batch_size, channels, height, width)

@@ -154,6 +154,7 @@ class TensorRTInferenceBenchmark(MicroBenchmarkWithInvoke):
             bool: True if preprocessing succeeds.
         """
         import torch
+        import os
 
         if not self._args.model_identifier:
             logger.error('--model_identifier is required when using --model_source huggingface')
@@ -174,14 +175,20 @@ class TensorRTInferenceBenchmark(MicroBenchmarkWithInvoke):
             loader = HuggingFaceModelLoader(token=self._args.hf_token)
             hf_model, hf_config, tokenizer = loader.load_model_from_config(model_config)
 
-            # Export to ONNX
+            # Export to ONNX with per-process directory to avoid race conditions
             exporter = torch2onnxExporter()
+
+            # Get process rank for unique directory
+            proc_rank = os.environ.get('PROC_RANK', os.environ.get('CUDA_VISIBLE_DEVICES', '0'))
+            output_dir = f'/tmp/tensorrt_onnx_rank_{proc_rank}'
+            os.makedirs(output_dir, exist_ok=True)
 
             onnx_path = exporter.export_huggingface_model(
                 model=hf_model,
                 model_name=self._args.model_identifier.replace('/', '_'),
                 batch_size=self._args.batch_size,
                 seq_length=getattr(self._args, 'seq_length', 512),
+                output_dir=output_dir,
             )
 
             if not onnx_path:
@@ -199,16 +206,30 @@ class TensorRTInferenceBenchmark(MicroBenchmarkWithInvoke):
             # NLP models typically have 2D input (batch, sequence)
             if input_name == 'pixel_values' or len(onnx_model.graph.input[0].type.tensor_type.shape.dim) == 4:
                 # Vision model: batch x channels x height x width
-                input_shape = f'{self._args.batch_size}x3x224x224'
+                input_shapes = f'{input_name}:{self._args.batch_size}x3x224x224'
             else:
-                # NLP model: batch x sequence
-                input_shape = f'{self._args.batch_size}x{getattr(self._args, "seq_length", 512)}'
+                # NLP model: batch x sequence - need to specify all inputs with same batch and seq length
+                seq_len = getattr(self._args, 'seq_length', 512)
+                shapes_list = []
+                for inp in onnx_model.graph.input:
+                    inp_name = inp.name
+                    num_dims = len(inp.type.tensor_type.shape.dim)
+                    if num_dims == 2:
+                        # Standard 2D input: batch x sequence
+                        shapes_list.append(f'{inp_name}:{self._args.batch_size}x{seq_len}')
+                    elif num_dims == 4:
+                        # 4D input (rare for NLP, but handle it)
+                        shapes_list.append(f'{inp_name}:{self._args.batch_size}x1x{seq_len}x{seq_len}')
+                    else:
+                        # Default to 2D
+                        shapes_list.append(f'{inp_name}:{self._args.batch_size}x{seq_len}')
+                input_shapes = ','.join(shapes_list)
 
             # Build TensorRT command with correct input name
             args = [
                 self.__bin_path,
                 f'--onnx={onnx_path}',
-                f'--optShapes={input_name}:{input_shape}',
+                f'--optShapes={input_shapes}',
                 f'--memPoolSize=workspace:8192M',
                 None if self._args.precision == 'fp32' else f'--{self._args.precision}',
                 f'--iterations={self._args.iterations}',
